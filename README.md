@@ -43,3 +43,17 @@
 证书仅导入 GitHub 临时 Runner 的专用钥匙串，任务结束时清理。不要将 p8、p12、私钥或密码提交至 Git。证书到期或吊销后，需要更新对应 Secrets。
 
 Apple 公证说明：[Developer ID](https://developer.apple.com/developer-id/)。
+
+## 当前公证阻塞（2026-10-20）
+
+已验证本地 Debug 自动签名构建、运行与 Developer ID 通用导出。苹果公证服务接受上传后返回错误 `7000`：`Team is not yet configured for notarization`，日志中 `issues` 为 null。需由团队账号持有人通过 [Apple Developer Program Support](https://developer.apple.com/contact/) 处理团队公证资格；类别按苹果日志选择 Development and Technical / Other Development or Technical Questions。
+
+工作流会保留明确标注为 `Apdlsl-signed-not-notarized` 的已签名诊断包；仅 Apple 返回 Accepted 并完成 stapler、Gatekeeper 检查后才生成 `Apdlsl-macOS` 正式产物。
+
+Apple 处理完团队资格后，进入 Actions 手动运行 `macOS Build and Notarize`，或执行：
+
+```sh
+gh workflow run macos.yml --repo RaulVan/Apdlsl --ref main
+```
+
+验证运行：[GitHub Actions #3](https://github.com/RaulVan/Apdlsl/actions/runs/39348648851)。构建、自动导出签名与凭据认证均通过；公证因 Apple 团队资格错误 7000 拒绝。
