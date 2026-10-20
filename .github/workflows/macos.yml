@@ -30,8 +30,8 @@ jobs:
             ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO \
             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual archive
-          lipo -verify_arch arm64 x86_64 \
-            build/Apdlsl.xcarchive/Products/Applications/Apdlsl.app/Contents/MacOS/Apdlsl
+          lipo build/Apdlsl.xcarchive/Products/Applications/Apdlsl.app/Contents/MacOS/Apdlsl \
+            -verify_arch arm64 x86_64
       - name: Upload archive for diagnostics
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -79,6 +79,20 @@ jobs:
           codesign -dvv build/export/Apdlsl.app 2>&1 | grep -q 'flags=.*runtime'
           codesign -d --entitlements :- build/export/Apdlsl.app > build/export/entitlements.plist
           /usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' build/export/entitlements.plist | grep -q true
+      - name: Preserve signed app before notarization
+        if: github.event_name != 'pull_request'
+        run: |
+          ditto -c -k --keepParent build/export/Apdlsl.app build/Apdlsl-signed-not-notarized.zip
+          (cd build && shasum -a 256 Apdlsl-signed-not-notarized.zip > SIGNED-SHA256SUMS.txt)
+      - name: Upload signed app for diagnostics (not notarized)
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Apdlsl-signed-not-notarized
+          path: |
+            build/Apdlsl-signed-not-notarized.zip
+            build/SIGNED-SHA256SUMS.txt
+          retention-days: 7
       - name: Submit to Apple notarization and staple ticket
         if: github.event_name != 'pull_request'
         env:
@@ -102,6 +116,11 @@ jobs:
                   '--key-id', os.environ['ASC_KEY_ID'], '--issuer', os.environ['ASC_ISSUER_ID'],
                   'build/notary/log.json'], check=True)
           if result.get('status') != 'Accepted':
+              log = json.loads(Path('build/notary/log.json').read_text())
+              reason = f"{log.get('statusCode')}: {log.get('statusSummary')}"
+              print('Apple notarization rejected:', reason)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                  summary.write('Apple notarization failed: ' + reason + '\n')
               raise SystemExit('Apple has not accepted this build; inspect the notarization artifact.')
           PY
           xcrun stapler staple build/export/Apdlsl.app
