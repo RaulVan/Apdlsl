@@ -24,7 +24,7 @@
 
 工作流：`.github/workflows/macos.yml`。
 
-- 推送 `main` 或手动触发：构建通用归档 → Xcode 自动导出 Developer ID 签名 App → Apple 公证 → 附加公证票据 → Gatekeeper 校验 → 上传 ZIP 与 SHA-256。
+- 推送 `main` 或手动触发：构建保留 Hardened Runtime 与沙盒的通用归档 → Xcode 自动导出 Developer ID 签名 App → Apple 公证 → 附加公证票据 → Gatekeeper 校验 → 上传 ZIP 与 SHA-256。
 - Pull Request：仅构建，不读取签名与公证 Secrets。
 - 成功产物：Actions 运行页面中的 `Apdlsl-macOS`，保留 14 天。
 - 公证诊断：`Apdlsl-notarization`。苹果未返回 `Accepted` 时不会生成可分发产物。

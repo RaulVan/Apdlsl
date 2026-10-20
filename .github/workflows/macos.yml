@@ -29,13 +29,13 @@ jobs:
             -archivePath build/Apdlsl.xcarchive \
             ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO \
             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
-            CODE_SIGNING_ALLOWED=NO archive
+            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual archive
           lipo -verify_arch arm64 x86_64 \
             build/Apdlsl.xcarchive/Products/Applications/Apdlsl.app/Contents/MacOS/Apdlsl
-      - name: Upload unsigned archive for diagnostics
+      - name: Upload archive for diagnostics
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Apdlsl-unsigned-archive
+          name: Apdlsl-archive
           path: build/Apdlsl.xcarchive
           retention-days: 7
       - name: Configure Apple signing credentials
@@ -76,6 +76,9 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
           codesign --verify --deep --strict --verbose=2 build/export/Apdlsl.app
           codesign -dvv build/export/Apdlsl.app
+          codesign -dvv build/export/Apdlsl.app 2>&1 | grep -q 'flags=.*runtime'
+          codesign -d --entitlements :- build/export/Apdlsl.app > build/export/entitlements.plist
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' build/export/entitlements.plist | grep -q true
       - name: Submit to Apple notarization and staple ticket
         if: github.event_name != 'pull_request'
         env:

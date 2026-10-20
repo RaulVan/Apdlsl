@@ -13,4 +13,4 @@
 - Release 通用归档成功，包含 arm64 与 x86_64。
 - plist 与 shell 语法检查通过。
 - 已配置 5 项 GitHub Secrets，临时导出私钥文件已清理。
-- 待验证：Xcode Developer ID 导出、GitHub CI、Apple 公证结果。
+- 待验证：修正未签名归档导致导出丢失 Hardened Runtime 的问题，并验证 GitHub CI 与 Apple 公证结果。
