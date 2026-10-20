@@ -1,0 +1,131 @@
+name: macOS Build and Notarize
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build universal macOS app
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Archive for Apple Silicon and Intel
+        run: |
+          xcodebuild -version
+          xcodebuild -project Apdlsl.xcodeproj -scheme Apdlsl \
+            -configuration Release -destination 'generic/platform=macOS' \
+            -archivePath build/Apdlsl.xcarchive \
+            ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO archive
+          lipo -verify_arch arm64 x86_64 \
+            build/Apdlsl.xcarchive/Products/Applications/Apdlsl.app/Contents/MacOS/Apdlsl
+      - name: Upload unsigned archive for diagnostics
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Apdlsl-unsigned-archive
+          path: build/Apdlsl.xcarchive
+          retention-days: 7
+      - name: Configure Apple signing credentials
+        if: github.event_name != 'pull_request'
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          : "${APPLE_CERTIFICATE_P12_BASE64:?Missing signing certificate}"
+          : "${APPLE_CERTIFICATE_PASSWORD:?Missing certificate password}"
+          : "${ASC_PRIVATE_KEY:?Missing Apple API private key}"
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          printf '%s' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/signing.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+      - name: Export with Xcode automatic Developer ID signing
+        if: github.event_name != 'pull_request'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcodebuild -exportArchive -archivePath build/Apdlsl.xcarchive \
+            -exportPath build/export -exportOptionsPlist Config/ExportOptions.plist \
+            -allowProvisioningUpdates -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          codesign --verify --deep --strict --verbose=2 build/export/Apdlsl.app
+          codesign -dvv build/export/Apdlsl.app
+      - name: Submit to Apple notarization and staple ticket
+        if: github.event_name != 'pull_request'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/notary
+          ditto -c -k --keepParent build/export/Apdlsl.app build/notary/submission.zip
+          xcrun notarytool submit build/notary/submission.zip \
+            --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
+            --wait --timeout 20m --output-format json > build/notary/result.json
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          result = json.loads(Path('build/notary/result.json').read_text())
+          print('Notarization status:', result.get('status'))
+          if result.get('id'):
+              subprocess.run(['xcrun', 'notarytool', 'log', result['id'],
+                  '--key', os.environ['RUNNER_TEMP'] + '/AuthKey.p8',
+                  '--key-id', os.environ['ASC_KEY_ID'], '--issuer', os.environ['ASC_ISSUER_ID'],
+                  'build/notary/log.json'], check=True)
+          if result.get('status') != 'Accepted':
+              raise SystemExit('Apple has not accepted this build; inspect the notarization artifact.')
+          PY
+          xcrun stapler staple build/export/Apdlsl.app
+          xcrun stapler validate build/export/Apdlsl.app
+          spctl --assess --type execute --verbose=2 build/export/Apdlsl.app
+          ditto -c -k --keepParent build/export/Apdlsl.app build/Apdlsl-macOS.zip
+          (cd build && shasum -a 256 Apdlsl-macOS.zip > SHA256SUMS.txt)
+      - name: Upload notarization diagnostics
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Apdlsl-notarization
+          path: build/notary/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload signed and notarized app
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Apdlsl-macOS
+          path: |
+            build/Apdlsl-macOS.zip
+            build/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove ephemeral Apple credentials
+        if: always() && github.event_name != 'pull_request'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/signing.p12" "$RUNNER_TEMP/AuthKey.p8"

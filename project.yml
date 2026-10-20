@@ -1,0 +1,35 @@
+name: Apdlsl
+options:
+  minimumXcodeGenVersion: 2.45.0
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: 3T9SU9PJ42
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_HARDENED_RUNTIME: YES
+targets:
+  Apdlsl:
+    type: application
+    platform: macOS
+    sources:
+      - path: Apdlsl
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.onemanlol.app
+        PRODUCT_NAME: Apdlsl
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Apdlsl
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        CODE_SIGN_ENTITLEMENTS: Apdlsl/Apdlsl.entitlements
+        CODE_SIGN_IDENTITY: "Apple Development"
+        ENABLE_APP_SANDBOX: YES
+        COMBINE_HIDPI_IMAGES: YES
+    scheme:
+      buildTargets:
+        - Apdlsl
+      archive:
+        config: Release
